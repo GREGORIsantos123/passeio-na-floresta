@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Passeio na floresta</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #070b10; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { display: block; width: 100vw; max-width: calc(100vh * 16 / 9); height: auto; aspect-ratio: 16 / 9; }
+</style>
+</head>
+<body>
+<canvas id="stage" aria-label="Pessoa passeando com o cachorro na floresta, em 12 painéis com os princípios da animação. Espaço pausa e continua."></canvas>
+<script src="src/motion-data.js"></script>
+<script src="src/scene.js"></script>
+<script>
+  const params = new URLSearchParams(location.search);
+  const canvas = document.getElementById('stage');
+  const wanted = Number(params.get('ss'));
+  const ss = wanted > 0 ? wanted : Math.min(2, Math.max(1, Math.ceil(canvas.clientWidth * devicePixelRatio / 1280)));
+  canvas.width = 1280 * ss;
+  canvas.height = 720 * ss;
+  const ctx = canvas.getContext('2d');
+  Forest.setup(ss);
+  window.drawFrame = (f) => Forest.renderFrame(ctx, f);
+
+  // ?capture=1: sem relogio; quem chama (tools/render_video.py) escolhe cada quadro.
+  if (!params.has('capture')) {
+    let playing = true, frame = 0, last = performance.now();
+    addEventListener('keydown', (e) => {
+      if (e.code === 'Space') { e.preventDefault(); playing = !playing; }
+    });
+    const tick = (now) => {
+      if (playing) frame = (frame + (now - last) * Forest.FPS / 1000) % Forest.N;
+      last = now;
+      drawFrame(frame);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  } else {
+    drawFrame(0);
+    window.ready = true;
+  }
+</script>
+</body>
+</html>
