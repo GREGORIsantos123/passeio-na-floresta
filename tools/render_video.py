@@ -19,7 +19,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
     ap.add_argument("--frames", help="lista de quadros; grava PNGs em vez do video")
-    ap.add_argument("--ss", type=int, default=2, help="superamostragem do render")
+    ap.add_argument("--ss", type=float, default=2, help="superamostragem do render")
+    ap.add_argument("--page", default="index.html", help="pagina a renderizar")
+    ap.add_argument("--count", type=int, default=600, help="total de quadros do video")
     a = ap.parse_args()
 
     with sync_playwright() as pw:
@@ -27,9 +29,9 @@ def main():
         page = browser.new_page(viewport={"width": 1280, "height": 720})
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
-        page.goto((ROOT / "index.html").as_uri() + f"?capture=1&ss={a.ss}")
+        page.goto((ROOT / a.page).as_uri() + f"?capture=1&ss={a.ss}")
         try:
-            page.wait_for_function("window.ready === true", timeout=60000)
+            page.wait_for_function("window.ready === true", timeout=120000)
         finally:
             if errors:
                 print("ERROS NA PAGINA:", errors)
@@ -45,7 +47,7 @@ def main():
                    "-vf", "scale=1280:720:flags=lanczos", "-c:v", "libx264", "-preset", "slow",
                    "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", a.out]
             ff = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-            for f in range(600):
+            for f in range(a.count):
                 ff.stdin.write(base64.b64decode(page.evaluate(GRAB, f)))
                 if f % 60 == 0:
                     print("quadro", f, flush=True)

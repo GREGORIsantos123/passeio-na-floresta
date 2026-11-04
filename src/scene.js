@@ -43,8 +43,89 @@
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 
+  /* ---------- Estabilizacao das curvas medidas ----------
+   * O video traz degraus de 1px e um tremelique constante da "gelatina" parada, que numa
+   * pessoa parece tremor. Parado: so respiracao lenta. Em acao: suavizacao leve, sem
+   * atravessar cortes e impactos, para saltos, poses e corridas continuarem iguais. */
+  const SLOW = 24;                                    // sigma (quadros) do corpo parado
+  const RAMP = 14;                                    // quadros de transicao entre acao e repouso
+  const IMPACT = ['squash', 'exagero', 'arco', 'secundaria']; // deformacao rapida e proposital
+  const KEEP = {                                      // estalos do original ligados aos efeitos
+    solido: (t) => t % (4 / 3) < 0.45,
+    apelo: (t) => t % 2 > 0.45 && t % 2 < 1.35,
+  };
+
+  function gauss(a, sigma, brk) {
+    const r = Math.ceil(sigma * 3), out = new Array(a.length);
+    for (let i = 0; i < a.length; i++) {
+      let sum = a[i], w = 1;
+      for (const dir of [-1, 1]) {
+        for (let d = 1; d <= r; d++) {
+          const j = i + dir * d;
+          if (j < 0 || j >= a.length) break;
+          if (brk[dir < 0 ? j + 1 : j]) break;       // brk[k]: ha corte entre k-1 e k
+          const g = Math.exp(-0.5 * (d / sigma) ** 2);
+          sum += a[j] * g; w += g;
+        }
+      }
+      out[i] = sum / w;
+    }
+    return out;
+  }
+
+  const median5 = (a) => a.map((_, i) => {
+    const s = a.slice(Math.max(0, i - 2), i + 3).sort((p, q) => p - q);
+    return s[s.length >> 1];
+  });
+
+  function stabilize(tr, o) {
+    const n = tr.x.length, x0 = median5(tr.x);
+    const brk = x0.map((_, i) => i > 0 && (Math.abs(x0[i] - x0[i - 1]) > 30
+      || Math.abs(tr.h[i] - tr.h[i - 1]) > 12 || tr.vis[i] !== tr.vis[i - 1]));
+    const noBrk = new Array(n).fill(false);
+    const footsSorted = [...tr.foot].sort((p, q) => p - q);
+    const ground = footsSorted[Math.floor(n * 0.9)];
+    const keep = KEEP[o.key];
+
+    // Peso de acao: 1 em movimento, no ar, em deformacao grande ou em estalo proposital.
+    const raw = x0.map((_, f) => {
+      const a = x0[Math.max(0, f - WIN)], b = x0[Math.min(n - 1, f + WIN)];
+      const moving = Math.abs(b - a) / (2 * WIN) > 0.5;
+      const air = !o.free && ground - tr.foot[f] > 3;
+      const big = tr.h[f] < 36 || tr.h[f] > 78 || tr.w[f] > 80;
+      return moving || air || big || o.free || (keep && keep(f / FPS)) ? 1 : 0;
+    });
+    const dil = raw.map((_, i) => (raw.slice(Math.max(0, i - 8), i + 9).some(Boolean) ? 1 : 0));
+    // Dentro do trecho parado, o peso cai de 1 a 0 conforme se afasta da acao: sem saltos na emenda.
+    const act = dil.map((v, i) => {
+      if (v) return 1;
+      for (let d = 1; d <= RAMP; d++) {
+        if (dil[i - d] || dil[i + d]) return 1 - sstep(0, RAMP, d);
+      }
+      return 0;
+    });
+    // A media lenta so enxerga quadros parados: nunca puxa o corpo para a corrida vizinha.
+    const brkSlow = brk.map((b, i) => b || (i > 0 && dil[i] !== dil[i - 1]));
+
+    const mix = (a, sigma) => {
+      const mild = gauss(a, sigma, brk), slow = gauss(a, SLOW, brkSlow);
+      return a.map((_, i) => (dil[i] ? mild[i] : lerp(slow[i], mild[i], act[i])));
+    };
+    const shape = o.free ? 5 : IMPACT.includes(o.key) ? 1.5 : 3.5;
+    const out = {
+      ...tr,
+      x: mix(x0, o.free ? 4 : 2.2),
+      foot: o.free ? gauss(tr.foot, 4, noBrk) : mix(tr.foot, 1),
+      w: mix(tr.w, shape), h: mix(tr.h, shape),
+      lean: mix(tr.lean, o.free ? 5 : 3), sq: mix(tr.sq, 4),
+    };
+    if (tr.ball) out.ball = gauss(tr.ball, 1.5, noBrk);
+    return out;
+  }
+
   /* ---------- Movimento da pessoa ---------- */
-  function buildPerson(tr, opts = {}) {
+  function buildPerson(rawTrack, opts = {}) {
+    const tr = stabilize(rawTrack, opts);
     const foots = tr.foot.filter((_, i) => tr.vis[i]).sort((a, b) => a - b);
     const ground = opts.free ? null : foots[Math.floor(foots.length * 0.9)];
     const fr = [];
@@ -56,7 +137,8 @@
         vis: !!tr.vis[f], x: tr.x[f] - lean * tr.h[f] / 2, foot: tr.foot[f],
         sx: w / W0, sy: tr.h[f] / H0, lean, air: air > 3 ? air : 0, ground,
         sq: sstep(0.8, 0.93, tr.sq[f]),
-        blink: tr.eye[f] / Math.max(tr.h[f], 1) < 0.085 ? 1 : 0,
+        // So o "Apelo" pisca de proposito; esticar o corpo nao pode fechar os olhos.
+        blink: opts.key === 'apelo' && KEEP.apelo(f / FPS) && rawTrack.eye[f] / Math.max(rawTrack.h[f], 1) < 0.085 ? 1 : 0,
         pomGap: tr.ball ? Math.max(0, tr.foot[f] - tr.h[f] - tr.ball[f]) : null,
       });
     }
@@ -114,7 +196,7 @@
       const after = t > 1.42 ? Math.exp(-(t - 1.42) * 5) * Math.abs(Math.sin((t - 1.42) * 13)) : 0;
       const pre = t > 0.38 && t < 0.62 ? 1 : 0;
       return { x: flying ? 96 : 76, lift: after * 22 + (flying ? 3 : 0), sx: pre ? 1.1 : 1, sy: pre ? 0.82 : 1, lean: 0,
-        sit: flying ? 0 : 1, beg: flying ? 1 : 0, spring: [0.16, 0.72], wag: flying ? 0.2 : 1, shake: flying };
+        sit: flying ? 0 : 1, beg: flying ? 1 : 0, spring: [0.16, 0.72], wag: flying ? 0.2 : 1 };
     },
     secundaria: (P, f) => ({ ...follow(P, f, 9, 0, 0.3, 0.35), x: 98, sit: P[wrap(f - 9)].air > 4 ? 0 : 1, wag: 1.4, pant: true }),
     squash: (P, f) => ({ ...follow(P, f + 30, 0, 0, 0.36, 0.5), x: 92, wag: 1 }),
@@ -176,7 +258,7 @@
         const headY = (p.vis ? p.foot - 58 * p.sy : -40) - (foot - 26);
         const headX = Math.abs(p.x - x) + 10;
         fr[f] = { x, foot, lift: air, sx: t.sx, sy: t.sy, lean: t.lean, face, phase, amp, ear, tail, sit, beg, lie,
-          wag: t.wag === undefined ? 0.8 : t.wag, pant: !!t.pant, shake: !!t.shake, f,
+          wag: t.wag === undefined ? 0.8 : t.wag, pant: !!t.pant, f,
           look: clamp(Math.atan2(headY, headX), -1.05, 0.25), ground: G };
       }
     }
@@ -284,10 +366,11 @@
       c.fillStyle = C.ink; c.strokeStyle = C.ink; c.lineWidth = 1.7;
       for (const ex of [fx - 3.2, fx + 5.4]) {
         if (p.blink) { c.beginPath(); c.moveTo(ex - 2.8, fy - 1); c.lineTo(ex + 2.8, fy - 1); c.stroke(); }
-        else { c.beginPath(); c.ellipse(ex, fy - 1, 2, 2.5, 0, 0, TAU); c.fill(); }
+        else { const es = p.eyeS || 1; c.beginPath(); c.ellipse(ex, fy - 1, 2 * es, 2.5 * es, 0, 0, TAU); c.fill(); }
       }
       c.lineWidth = 1.3;
-      c.beginPath(); c.arc(fx + 1, fy + 3, 3.1, 0.2, Math.PI - 0.2); c.stroke();
+      if (p.mouthO) { c.beginPath(); c.ellipse(fx + 1, fy + 5, 2.6, 3.2 * p.mouthO, 0, 0, TAU); c.fill(); }
+      else { c.beginPath(); c.arc(fx + 1, fy + 3, 3.1, 0.2, Math.PI - 0.2); c.stroke(); }
     }
 
     // Pompom do capuz: no painel "Ação secundária" ele repete a bolinha que atrasa.
@@ -320,9 +403,8 @@
   /* ---------- Desenho do cachorro ---------- */
   function drawDog(c, d, ghost, t) {
     const face = Math.abs(d.face) < MIN_FACE ? (d.face < 0 ? -MIN_FACE : MIN_FACE) : d.face;
-    const shake = d.shake ? Math.sin(t * 40) * 0.8 : 0;
     c.save();
-    c.transform(d.sx, 0, -d.lean * d.sy, d.sy, d.x + shake, d.foot);
+    c.transform(d.sx, 0, -d.lean * d.sy, d.sy, d.x, d.foot);
     c.scale(face, 1);
     c.lineCap = 'round'; c.lineJoin = 'round';
     const s = d.sit, b = d.beg, l = d.lie;
@@ -375,7 +457,10 @@
       c.fillStyle = C.nose; c.beginPath(); c.ellipse(13.4, 0.2, 2.4, 2, 0, 0, TAU); c.fill();
       c.beginPath(); c.arc(3.6, -2.6, 1.7, 0, TAU); c.fill();
       c.fillStyle = C.fx; c.beginPath(); c.arc(4.1, -3.2, 0.6, 0, TAU); c.fill();
-      if (d.pant) {
+      if (d.bark) {
+        c.fillStyle = C.ink;
+        c.beginPath(); c.moveTo(3, 5); c.lineTo(13, 5); c.lineTo(9, 6 + d.bark * 7); c.closePath(); c.fill();
+      } else if (d.pant) {
         c.fillStyle = C.tongue;
         c.beginPath(); c.roundRect(7, 5, 3.6, 5 + Math.sin(t * 22) * 1.2, 1.8); c.fill();
       }
@@ -843,7 +928,7 @@
 
   /* ---------- Montagem ---------- */
   function buildEntity(key, opts) {
-    const P = buildPerson(window.MOTION[key], opts);
+    const P = buildPerson(window.MOTION[key], { ...opts, key });
     const D = buildDog(P, key);
     faceToDog(P, D, opts);
     return { key, P, D, dust: opts.free ? [] : dustEvents(P, D) };
@@ -943,5 +1028,10 @@
     }
   }
 
-  window.Forest = { setup, renderFrame, FPS, N };
+  window.Forest = {
+    setup, renderFrame, FPS, N,
+    // Pecas reaproveitadas pelo filme (src/story.js).
+    kit: { C, TAU, clamp, lerp, sstep, rngOf, mkCanvas, drawPerson, drawDog, dogCollar, drawLeash, drawShadow,
+      pine, broadTrunk, canopy, paintGround, drawLog, star },
+  };
 })();

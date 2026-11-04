@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Urso na floresta</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #070b10; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { display: block; width: 100vw; max-width: calc(100vh * 16 / 9); height: auto; aspect-ratio: 16 / 9; }
+</style>
+</head>
+<body>
+<canvas id="stage" aria-label="Uma pessoa e seu cachorro passeiam na floresta, fogem de um urso e chegam a uma cabana ao lado de um lago com peixes pulando. Espaço pausa e continua."></canvas>
+<script src="src/scene.js"></script>
+<script src="src/story.js"></script>
+<script>
+  const params = new URLSearchParams(location.search);
+  const canvas = document.getElementById('stage');
+  const wanted = Number(params.get('ss'));
+  const ss = wanted > 0 ? wanted : 1;
+  canvas.width = Math.round(1280 * ss);
+  canvas.height = Math.round(720 * ss);
+  const ctx = canvas.getContext('2d');
+  Story.setup(ss);
+  window.drawFrame = (f) => Story.drawFrame(ctx, f);
+
+  if (!params.has('capture')) {
+    let playing = true, frame = 0, last = performance.now();
+    addEventListener('keydown', (e) => {
+      if (e.code === 'Space') { e.preventDefault(); playing = !playing; }
+    });
+    const tick = (now) => {
+      if (playing) frame = (frame + (now - last) * Story.FPS / 1000) % Story.N;
+      last = now;
+      drawFrame(frame);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  } else {
+    drawFrame(0);
+    window.ready = true;
+  }
+</script>
+</body>
+</html>
