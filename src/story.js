@@ -41,7 +41,7 @@
     return s;
   };
 
-  const P_HOPS = [[7.55, 8.05, 54], [11.1, 11.55, 64]];
+  const P_HOPS = [[7.55, 8.05, 54], [11.1, 11.55, 64], [16.56, 16.88, 14], [18.11, 18.43, 14]];
   const D_HOPS = [[7.62, 7.98, 34], [10.72, 11.12, 52], [16.5, 16.82, 16], [18.05, 18.37, 16]];
 
   const pX = K([[0, 110], [5.4, 370, 'l'], [5.75, 378, 'o'], [8.6, 378], [9.05, 366], [9.6, 450, 'i'], [13.6, 1450, 'l'], [14.2, 1570, 'o'], [14.5, 1560]]);
@@ -82,7 +82,7 @@
       const launch = bump(t, 9.24, 0.1, 0.28);
       const skid = bump(t, 14.1, 0.16, -0.24) + bump(t, 14.45, 0.1, 0.1);
       const pant = 0.07 * Math.sin(t * TAU * 1.7) * sstep(14.3, 14.6, t) * (1 - sstep(15.6, 17, t));
-      const breath = 0.014 * Math.sin(t * TAU * 0.55);
+      const breath = 0.014 * Math.sin(t * TAU * 0.55) + bump(t, 15.45, 0.24, 0.13) + bump(t, 15.85, 0.2, -0.08); // suspiro de alivio
       const runBob = speed > 2 ? 0.045 * Math.sin(pPh * 2) : 0;
       const sy = 1 + hopSquash(t, P_HOPS) + fear + antic + launch + skid + pant + breath + runBob;
       const sx = clamp(1 - (sy - 1) * 0.72, 0.5, 1.6);
@@ -90,7 +90,7 @@
         vis: true, x, foot: G - air, sx, sy, lean: pLean(t), face: pFace(t), phase: pPh, amp: pAmp, air,
         sq: 0, pomGap: 5 + clamp(bump(t, 7.75, 0.2, 18) + bump(t, 11.3, 0.2, 14) + speed * 1.4, 0, 30),
         blink: !scared(t) && (t % 3.7) < 0.1 ? 1 : 0,
-        eyeS: scared(t) ? 1.4 : 1, mouthO: scared(t) ? 0.9 + Math.sin(t * 20) * 0.1 : 0, ground: G,
+        eyeS: scared(t) ? 1.4 : 1, mouthO: scared(t) ? 0.9 : 0, ground: G,
       };
       if (Math.abs(p.face) < 0.55) p.face = p.face < 0 ? -0.55 : 0.55;
 
@@ -114,7 +114,7 @@
         face: dFace(t), phase: dPh, amp: dAmp, ear, tail, sit, beg: 0, lie: 0,
         wag: t > 15 ? 1.7 : scared(t) ? 0.15 : t > 5.6 && t < 7.4 ? 0.1 : 0.9,
         pant: t > 14 || (t > 0.5 && t < 5.5), bark: barking ? 1 : 0,
-        look: sniff ? 0.3 + Math.sin(t * 24) * 0.08 : t > 5.7 && t < 9 ? -0.16 : fishLook, ground: G,
+        look: sniff ? 0.3 + Math.sin(t * 12) * 0.06 : t < 5.5 ? -0.3 : t > 5.7 && t < 9 ? -0.16 : fishLook, ground: G,
       };
       if (Math.abs(d.face) < 0.55) d.face = d.face < 0 ? -0.55 : 0.55;
 
@@ -122,7 +122,7 @@
       bPh += (bv / 88) * TAU;
       bAmp += ((bv > 0.2 ? 1 : 0) - bAmp) * 0.15;
       const rise = bRise(t);
-      const roar = bump(t, 7.32, 0.09, -0.16) + bump(t, 7.6, 0.14, 0.16) + 0.02 * Math.sin(t * 46) * (t > 7.5 && t < 8.5 ? 1 : 0);
+      const roar = bump(t, 7.32, 0.09, -0.16) + bump(t, 7.6, 0.14, 0.16);
       const crash = t > 11.6 ? Math.exp(-(t - 11.6) * 3.5) : 0;
       const bSy = 1 + roar + bump(t, 8.95, 0.1, -0.16) + bump(t, 9.3, 0.1, 0.1) + crash * 0.2;
       const b = {
@@ -144,18 +144,21 @@
   }
 
   function paintMountains(c, rng) {
-    const ridge = (base, amp, col, seed) => {
-      const r = rngOf(seed);
-      c.fillStyle = col; c.beginPath(); c.moveTo(-400, G);
-      let y = base;
-      for (let x = -400; x <= 800; x += 26) {
-        y = clamp(y + (r() - 0.5) * amp, base - amp * 2.4, base + amp);
+    // Soma de senoides com picos afiados: serra de verdade, nao uma faixa reta.
+    const ridge = (base, amp, top, low, seed) => {
+      const r = rngOf(seed), p = [r() * TAU, r() * TAU, r() * TAU];
+      const g = c.createLinearGradient(0, base - amp, 0, G);
+      g.addColorStop(0, top); g.addColorStop(1, low);
+      c.fillStyle = g; c.beginPath(); c.moveTo(-400, G);
+      for (let x = -400; x <= 800; x += 5) {
+        const peak = 1 - Math.abs(Math.sin(x * 0.0085 + p[0]));
+        const y = base - amp * (peak * 0.95 + 0.32 * Math.sin(x * 0.027 + p[1]) + 0.12 * Math.sin(x * 0.083 + p[2]));
         c.lineTo(x, y);
       }
       c.lineTo(800, G); c.closePath(); c.fill();
     };
-    ridge(G - 112, 15, '#c7a596', 11 + (rng() * 5 | 0));
-    ridge(G - 78, 12, '#93a08f', 23);
+    ridge(G - 92, 58, '#b9a3a6', '#e6bd9b', 11 + (rng() * 5 | 0));
+    ridge(G - 62, 36, '#8c9c94', '#b5b59a', 23);
   }
 
   // Sub-bosque fechado no pe das arvores: sem ele, o ceu aparece em blocos entre os troncos.
@@ -293,7 +296,7 @@
     const sunCol = c.createLinearGradient(0, far, 0, YBOT);
     sunCol.addColorStop(0, 'rgba(255,232,170,.75)'); sunCol.addColorStop(1, 'rgba(255,214,140,0)');
     c.fillStyle = sunCol;
-    c.filter = 'blur(16px)';
+    c.filter = `blur(${20 * c.getTransform().a}px)`;   // o filtro e em pixels da camada, nao do mundo
     c.beginPath(); c.moveTo(SUN_X - 24, far); c.lineTo(SUN_X + 24, far); c.lineTo(SUN_X + 72, YBOT); c.lineTo(SUN_X - 72, YBOT); c.closePath(); c.fill();
     c.filter = 'none';
     c.restore();
@@ -590,7 +593,7 @@
       const a = t - d.t;
       if (a < 0 || a > 0.46) continue;
       const k = a / 0.46;
-      c.globalAlpha = (1 - k) * 0.55;
+      c.globalAlpha = (1 - k) * 0.36;
       c.beginPath(); c.arc(d.x - k * 24, d.y - 3 - k * 15 * d.s, (3 + k * 10) * d.s, 0, TAU); c.fill();
     }
     c.globalAlpha = 1;
@@ -607,6 +610,25 @@
       c.beginPath(); c.moveTo(p.x - 34 - off * 26, y); c.lineTo(p.x - 34 - off * 26 - len, y); c.stroke();
     }
     c.globalAlpha = 1;
+  }
+
+  // Borboleta que o cachorro segue no passeio; foge quando ele sente o urso.
+  function fxButterfly(c, d, t) {
+    if (t > 7) return;
+    const flee = sstep(5.45, 6.6, t);
+    const x = d.x + 44 + Math.sin(t * 1.5) * 26 + flee * 240;
+    const y = G - 74 + Math.sin(t * 2.7) * 15 - flee * 190;
+    const flap = 0.28 + 0.72 * Math.abs(Math.sin(t * 15));
+    c.save(); c.translate(x, y); c.rotate(-0.3 + Math.sin(t * 1.5) * 0.25);
+    for (const s of [-1, 1]) {
+      c.fillStyle = s < 0 ? '#ffd24d' : '#ffe27a';
+      c.beginPath(); c.ellipse(s * 5.2 * flap, -3.2, 5.4 * flap, 5, s * 0.5, 0, TAU); c.fill();
+      c.fillStyle = '#f59e3f';
+      c.beginPath(); c.ellipse(s * 3.8 * flap, 3, 3.6 * flap, 3.1, -s * 0.4, 0, TAU); c.fill();
+    }
+    c.strokeStyle = C.ink; c.lineWidth = 1.5; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(0, -4); c.lineTo(0, 4.5); c.stroke();
+    c.restore();
   }
 
   /* ---------- Quadro ---------- */
@@ -706,6 +728,7 @@
     const hand = drawPerson(ctx, p, collar);
     drawLeash(ctx, hand, collar, 1, f);
     fxSpeedLines(ctx, p, t);
+    fxButterfly(ctx, d, t);
     fxBang(ctx, d.x + 8, d.foot - 56, t, 5.68);
     fxBang(ctx, p.x, p.foot - 92 * p.sy, t, 7.5);
     ambient(ctx, S, fr, clear);
